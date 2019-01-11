@@ -104,6 +104,7 @@ func main() {
 	var (
 		bytePatternList string
 		strPatternList  string
+		err             error
 	)
 
 	fileVars.Cmd = strings.Join(os.Args, " ")
@@ -151,6 +152,11 @@ func main() {
 
 	if src == "" {
 		log.Fatal("Please specify the source directory or file by passing -src=\"some_path\" argument!")
+	}
+
+	src, err = filepath.Abs(src)
+	if err != nil {
+		log.Fatal("Error resolving source path \"" + src + "\"!")
 	}
 
 	if dst == "" { // If no output file is specified, force silent mode to print only the contents of the file

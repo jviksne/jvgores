@@ -13,7 +13,7 @@ The output file provides two functions for accessing the contents as byte slices
 
 From command line:
 
-`jvgores -src="C:\Users\someuser\go\src\github.com\jviksne\jvgores\test\data" -dst="C:\Users\someuser\go\src\github.com\jviksne\jvgores\test\output.go" -str="*.txt,*.htm?,*.js,*.css" -def=byte -sep=/ -pkg=res`
+`jvgores -src="C:\Users\someuser\go\src\github.com\jviksne\jvgores\sample\data" -dst="C:\Users\someuser\go\src\github.com\jviksne\jvgores\sample\output.go" -str="*.txt,*.htm?,*.js,*.css" -def=byte -sep=/ -pkg=res`
 
 Go:generate:
 
