@@ -132,6 +132,11 @@ func main() {
 
 	flag.Parse()
 
+	if len(os.Args) <= 1 {
+		flag.Usage()
+		return
+	}
+
 	// Remove quotes if they are present
 	src = getUnquoted(src)
 	dst = getUnquoted(dst)
