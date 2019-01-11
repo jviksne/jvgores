@@ -16,8 +16,8 @@ func GetResBytes(name string) []byte {
 }
 
 // GetResStr returns embedded file contents as a string.
-// In case no such file exists, an empty string is returned
-// with the second argument returned as false.
+// If the file is not found, an empty string is returned
+// with the second argument returned as false (true otherwise).
 func GetResStr(name string) (string, bool) {
 	s, ok := strFiles[name]
 	return s, ok

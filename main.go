@@ -89,10 +89,10 @@ func %%.%%(name string) []byte {
 }`
 
 	getResStrFnTemplText = `
-	
+
 // %%.%% returns embedded file contents as a string.
-// In case no such file exists, an empty string is returned
-// with the second argument returned as false.
+// If the file is not found, an empty string is returned
+// with the second argument returned as false (true otherwise).
 func %%.%%(name string) (string, bool) {
 	s, ok := strFiles[name]
 	return s, ok
