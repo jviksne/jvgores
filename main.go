@@ -132,6 +132,18 @@ func main() {
 
 	flag.Parse()
 
+	// Remove quotes if they are present
+	src = getUnquoted(src)
+	dst = getUnquoted(dst)
+	fileVars.PackageName = getUnquoted(fileVars.PackageName)
+	getResStrFn = getUnquoted(getResStrFn)
+	getResBytesFn = getUnquoted(getResBytesFn)
+	pathPrefix = getUnquoted(pathPrefix)
+	bytePatternList = getUnquoted(bytePatternList)
+	strPatternList = getUnquoted(strPatternList)
+	defFormat = getUnquoted(defFormat)
+	pathSep = getUnquoted(pathSep)
+
 	if src == "" {
 		log.Fatal("Please specify the source directory or file by passing -src=\"some_path\" argument!")
 	}
@@ -430,6 +442,22 @@ func walkFn(path string, info os.FileInfo, err error) error {
 	}
 
 	return nil
+}
+
+// getUnquoted returns an unquoted string
+// if the string is quoted from both ends,
+// and the original string unmodified otherwise.
+func getUnquoted(s string) string {
+
+	if len(s) < 2 {
+		return s
+	}
+
+	if s[0] == s[len(s)-1] && (s[0] == '\'' || s[0] == '"' || s[0] == '`') {
+		return s[1 : len(s)-1]
+	}
+
+	return s
 }
 
 func checkErr(err error) {
