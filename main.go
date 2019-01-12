@@ -67,11 +67,9 @@ var (
 	bytePatterns   []string
 	strPatterns    []string
 	defFormat      string
-	byteValues     []string
-	strValues      []string
+	byteKeyVal     [][]string
+	strKeyVal      [][]string
 	pathSep        string
-	isFirstByteVal bool = true
-	isFirstStrVal  bool = true
 	silent         bool = false
 )
 
@@ -133,6 +131,7 @@ func {^.^}(name string) string {
 	return s
 }
 `
+	newline = "\r\n"
 )
 
 func main() {
@@ -255,9 +254,9 @@ func main() {
 		pathSep = "" // do not replace the path separator if it already matches the current OS path separator
 	}
 
-	byteValues = make([]string, 0, 50)
+	byteKeyVal = make([][]string, 0, 25)
 
-	strValues = make([]string, 0, 50)
+	strKeyVal = make([][]string, 0, 25)
 
 	fileT, err := template.New("file").Delims("{^", "^}").Parse(fileTemplText)
 	if err != nil {
@@ -339,7 +338,7 @@ func main() {
 	// If either of the byte functions is present then init the bytes var
 	if getResBytesFn != "" || mustResBytesFn != "" {
 		var tpl bytes.Buffer
-		err = varByteFilesT.Execute(&tpl, strings.Join(byteValues, ""))
+		err = varByteFilesT.Execute(&tpl, getAlignedKeyValStr(byteKeyVal))
 		if err != nil {
 			log.Fatalf("Error executing \"var byteFiles...\" template: %s", err.Error())
 		}
@@ -367,7 +366,7 @@ func main() {
 	// If either of the byte functions is present then init the bytes var
 	if getResStrFn != "" || mustResStrFn != "" {
 		var tpl bytes.Buffer
-		err = varStrFilesT.Execute(&tpl, strings.Join(strValues, ""))
+		err = varStrFilesT.Execute(&tpl, getAlignedKeyValStr(strKeyVal))
 		if err != nil {
 			log.Fatalf("Error executing \"var strFiles...\" template: %s", err.Error())
 		}
@@ -530,35 +529,22 @@ func walkFn(path string, info os.FileInfo, err error) error {
 
 	if isByte {
 
-		if isFirstByteVal {
-			isFirstByteVal = false
-			byteValues = append(byteValues, "\n")
-		} else {
-			byteValues = append(byteValues, ",\n")
-		}
-
-		byteValues = append(byteValues,
-			"\t"+strconv.Quote(relativePath)+": []byte{")
+		var buffer bytes.Buffer
 
 		for i, v := range data {
 			if i > 0 {
-				byteValues = append(byteValues, fmt.Sprintf(", %d", v))
+				buffer.WriteString(fmt.Sprintf(", %d", v))
 			} else {
-				byteValues = append(byteValues, fmt.Sprintf("%d", v))
+				buffer.WriteString(fmt.Sprintf("%d", v))
 			}
 		}
 
-		byteValues = append(byteValues, "}")
+		byteKeyVal = append(byteKeyVal, []string{strconv.Quote(relativePath), "[]byte{" + buffer.String() + "}"})
+
 	}
 
 	if isStr {
-		if isFirstStrVal {
-			isFirstStrVal = false
-			strValues = append(strValues, "\n")
-		} else {
-			strValues = append(strValues, ",\n")
-		}
-		strValues = append(strValues, "\t"+strconv.Quote(relativePath)+": "+strconv.Quote(string(data)))
+		strKeyVal = append(strKeyVal, []string{strconv.Quote(relativePath), strconv.Quote(string(data))})
 	}
 
 	return nil
@@ -578,6 +564,54 @@ func getUnquoted(s string) string {
 	}
 
 	return s
+}
+
+// getAlignedKeyValStr returns a slice of key value pairs
+// concatenated with each pair on a separate row
+// and values aligned to start at the same column.
+func getAlignedKeyValStr(keyVals [][]string) string {
+
+	count := len(keyVals)
+
+	if count == 0 {
+		return ""
+	}
+
+	var buffer bytes.Buffer
+
+	buffer.WriteString(newline)
+
+	longest := 0
+
+	for _, keyVal := range keyVals {
+		if len(keyVal[0]) > longest {
+			longest = len(keyVal[0])
+		}
+	}
+
+	for i, keyVal := range keyVals {
+
+		buffer.WriteString("\t" + keyVal[0] + ": ")
+
+		// If the key is shorter than the longest key
+		// then add one or more space between ":" and the value
+		// to align all values to start at the same col
+		spaces := longest - len(keyVal[0])
+		if spaces >= 0 {
+			buffer.WriteString(strings.Repeat(" ", spaces))
+		}
+
+		// No comma and newline after the last
+		if i == count-1 {
+			buffer.WriteString(keyVal[1])
+		} else {
+			buffer.WriteString(keyVal[1] + "," + newline)
+		}
+
+	}
+
+	return buffer.String()
+
 }
 
 func checkErr(err error) {
