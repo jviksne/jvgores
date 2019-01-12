@@ -2,6 +2,8 @@
 
 package res
 
+import "fmt"
+
 var byteFiles = map[string][]byte{
 	"zero.png": []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 6, 98, 75, 71, 68, 0, 255, 0, 255, 0, 255, 160, 189, 167, 147, 0, 0, 0, 9, 112, 72, 89, 115, 0, 0, 46, 35, 0, 0, 46, 35, 1, 120, 165, 63, 118, 0, 0, 0, 11, 73, 68, 65, 84, 8, 215, 99, 96, 0, 2, 0, 0, 5, 0, 1, 226, 38, 5, 155, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}}
 
@@ -15,10 +17,30 @@ func GetResBytes(name string) []byte {
 	return byteFiles[name]
 }
 
+// MustResBytes returns embedded file contents as a byte slice.
+// Panics if the file is not found.
+func MustResBytes(name string) []byte {
+	b := byteFiles[name]
+	if b == nil {
+		panic(fmt.Sprintf("Byte resource \"%s\" not found.", name))
+	}
+	return b
+}
+
 // GetResStr returns embedded file contents as a string.
 // If the file is not found, an empty string is returned
 // with the second argument returned as false (true otherwise).
 func GetResStr(name string) (string, bool) {
 	s, ok := strFiles[name]
 	return s, ok
+}
+
+// MustResStr returns embedded file contents as a string.
+// Panics if the file is not found.
+func MustResStr(name string) string {
+	s, ok := strFiles[name]
+	if !ok {
+		panic(fmt.Sprintf("String resource \"%s\" not found.", name))
+	}
+	return s
 }

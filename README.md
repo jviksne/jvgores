@@ -3,7 +3,7 @@
 jvgores embeds files into a go file and provides functions for accessing their contents.
 
 It adds all files recursively under a path specified.
-The output file provides two functions for accessing the contents as byte slices or strings.
+The output file provides functions for accessing the contents as byte slices or strings.
 
 ## Installation
 
@@ -31,10 +31,16 @@ The flags are:
     package name of the output file, defaults to main
 
 -getresstrfn="GetResStr"
-    name of the function for retrieving the string contents of a file, defaults to GetResStr
+    name of the function for retrieving the string contents of a file, defaults to GetResStr, pass "nil" to ommit the function
+
+-mustresstrfn="MustResStr"
+    name of the helper function for retrieving the string contents of a file that panics upon the path not found, defaults to MustResStr, pass "nil" to ommit the function
 
 -getresbytesfn="GetResBytes"
-    name of the function for retrieving the contents of a file as a byte slice, defaults to GetResBytes
+    name of the function for retrieving the contents of a file as a byte slice, defaults to GetResBytes, pass "nil" to ommit the function
+
+-mustresbytesfn="MustResBytes"
+    name of the helper function for retrieving the contents of a file as a byte slice that panics upon the path not found, defaults to MustResBytes, pass "nil" to ommit the function
 
 -prefix="/some/prefix/"
     some prefix to add to the path that is passed to GetResStr() and GetResBytes() functions for identifying the files
