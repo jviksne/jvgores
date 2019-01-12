@@ -38,6 +38,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
@@ -46,6 +47,8 @@ import (
 type FileVars struct {
 	Cmd            string // Command used to generate the file
 	PackageName    string
+	ByteVars       string
+	StrConstants   string
 	VarByteFiles   string
 	VarStrFiles    string
 	GetResBytesFn  string
@@ -55,22 +58,32 @@ type FileVars struct {
 }
 
 var (
-	fileVars       FileVars
-	getResBytesFn  string
-	mustResBytesFn string
-	getResStrFn    string
-	mustResStrFn   string
-	walkDirMode    bool
-	src            string
-	dst            string
-	pathPrefix     string
-	bytePatterns   []string
-	strPatterns    []string
-	defFormat      string
-	byteKeyVal     [][]string
-	strKeyVal      [][]string
-	pathSep        string
-	silent         bool = false
+	genConst        bool
+	genFns          bool
+	fileVars        FileVars
+	getResBytesFn   string
+	mustResBytesFn  string
+	getResStrFn     string
+	mustResStrFn    string
+	walkDirMode     bool
+	src             string
+	dst             string
+	pathPrefix      string
+	bytePatterns    []string
+	strPatterns     []string
+	defFormat       string
+	byteConstPrefix string
+	strConstPrefix  string
+	byteVarKeyVal   [][]string                              // list of constants
+	strConstKeyVal  [][]string                              // list of string
+	byteAssocKeyVal [][]string                              // list of values to be used by byte functions
+	strAssocKeyVal  [][]string                              // list of values to be used by string functions
+	constFiles      map[string]string = map[string]string{} // all constant names mapped to filenames, used to identify duplicates
+	duplfix         bool              = false               // whether to automatically fix duplicate constant names by appending integer suffix
+	maxConstSuffix  int               = 100000              // If multiple files have the same name then the largest integer that can be appended to the name to make it unique
+	pathSep         string
+	silent          bool           = false
+	invConstCharRe  *regexp.Regexp = regexp.MustCompile("[^a-zA-Z0-9_]") // regular expression matching an invalid constant character
 )
 
 const (
@@ -78,8 +91,21 @@ const (
 	
 package {^.PackageName^}
 
-import "fmt"{^.VarByteFiles^}{^.VarStrFiles^}{^.GetResBytesFn^}{^.MustResBytesFn^}{^.GetResStrFn^}{^.MustResStrFn^}
+import "fmt"{^.ByteVars^}{^.StrConstants^}{^.VarByteFiles^}{^.VarStrFiles^}{^.GetResBytesFn^}{^.MustResBytesFn^}{^.GetResStrFn^}{^.MustResStrFn^}
 `
+
+	byteVarTemplate = `
+
+// File contents as public byte slice variables.
+// Byte slices are variables because arrays can not be constants.
+var({^.^}
+)`
+
+	strConstTemplate = `
+
+// File contents as public string constants.
+const({^.^}
+)`
 
 	varByteFilesTemplate = `
 
@@ -140,6 +166,7 @@ func main() {
 		bytePatternList string
 		strPatternList  string
 		err             error
+		generate        string
 	)
 
 	fileVars.Cmd = strings.Join(os.Args, " ")
@@ -150,6 +177,8 @@ func main() {
 
 	flag.StringVar(&fileVars.PackageName, "pkg", "main", "package name to be used in the output file, defaults to main")
 
+	flag.StringVar(&generate, "gen", "both", "what to generate: vars => generate only public variables, func => generate only functions, both => generate both (default)")
+
 	flag.StringVar(&getResBytesFn, "getresbytesfn", "GetResBytes", "name of the function for retrieving the contents of a file as a byte slice, defaults to GetResBytes, pass \"nil\" to ommit the function")
 
 	flag.StringVar(&mustResBytesFn, "mustresbytesfn", "MustResBytes", "name of the helper function for retrieving the contents of a file as a byte slice that panics upon the path not found, defaults to MustResBytes, pass \"nil\" to ommit the function")
@@ -158,13 +187,19 @@ func main() {
 
 	flag.StringVar(&mustResStrFn, "mustresstrfn", "MustResStr", "name of the helper function for retrieving the string contents of a file that panics upon the path not found, defaults to MustResStr, pass \"nil\" to ommit the function")
 
-	flag.StringVar(&pathPrefix, "prefix", "", "some prefix to add to the path that is passed to GetResStr() and GetResBytes() functions for identifying the files")
+	flag.StringVar(&pathPrefix, "prefix", "", "some path prefix to add to the path that is added to public variables as well as passed to GetResStr() and GetResBytes() functions for identifying the files")
+
+	flag.StringVar(&byteConstPrefix, "bcprefix", "", "some prefix to add to the byte slice variables, defaults to \"B_\" if omitted or empty")
+
+	flag.StringVar(&strConstPrefix, "scprefix", "", "some prefix to add to the string constants, defaults to \"S_\" if omitted or empty")
 
 	flag.StringVar(&bytePatternList, "byte", "", "a comma separated list of shell file name patterns to identify files that should be accessible as byte slices")
 
 	flag.StringVar(&strPatternList, "str", "", "a comma separated list of shell file name patterns to identify files that should be available as strings")
 
 	flag.StringVar(&defFormat, "def", "", `default format in case neither "-byte" nor "-str" patterns are matched: byte => byte (default), str => string, both => put in both, skip => skip the file`)
+
+	flag.BoolVar(&duplfix, "duplfix", false, `whether to automatically fix variables whose path get resolved to an identical variable name, false by default as choosing diferent file names would be preferable to avoid mistakes`)
 
 	flag.StringVar(&pathSep, "sep", "", `the path separator to be used within the go program`)
 
@@ -181,11 +216,14 @@ func main() {
 	src = getUnquoted(src)
 	dst = getUnquoted(dst)
 	fileVars.PackageName = getUnquoted(fileVars.PackageName)
+	generate = getUnquoted(generate)
 	getResBytesFn = getUnquoted(getResBytesFn)
 	mustResBytesFn = getUnquoted(mustResBytesFn)
 	getResStrFn = getUnquoted(getResStrFn)
 	mustResStrFn = getUnquoted(mustResStrFn)
 	pathPrefix = getUnquoted(pathPrefix)
+	byteConstPrefix = getUnquoted(byteConstPrefix)
+	strConstPrefix = getUnquoted(strConstPrefix)
 	bytePatternList = getUnquoted(bytePatternList)
 	strPatternList = getUnquoted(strPatternList)
 	defFormat = getUnquoted(defFormat)
@@ -218,6 +256,18 @@ func main() {
 		fileVars.PackageName = "main"
 	}
 
+	switch generate {
+	case "const":
+		genConst = true
+	case "func":
+		genFns = true
+	case "both":
+		genConst = true
+		genFns = true
+	default:
+		log.Fatalf("Bad value specified for argument gen: \"%s\".\nAllowed values are \"const\", \"func\", \"both\".", defFormat)
+	}
+
 	if getResBytesFn == "" {
 		getResBytesFn = "GetResBytes"
 	} else if getResBytesFn == "nil" {
@@ -242,6 +292,25 @@ func main() {
 		mustResStrFn = ""
 	}
 
+	// Do not allow blank byte constants
+	if byteConstPrefix == "" {
+		byteConstPrefix = "B_"
+	}
+
+	// Verify that prefix is valid
+	if invConstCharRe.MatchString(byteConstPrefix) {
+		log.Fatal("The bcprefix contains one or more invalid characters, only Latin letters and numbers are allowed!")
+	}
+
+	if strConstPrefix == "" {
+		strConstPrefix = "S_"
+	}
+
+	// Verify that prefix is valid
+	if invConstCharRe.MatchString(strConstPrefix) {
+		log.Fatal("The scprefix contains one or more invalid characters, only Latin letters and numbers are allowed!")
+	}
+
 	if bytePatternList != "" {
 		bytePatterns = strings.Split(bytePatternList, ",")
 	}
@@ -254,13 +323,23 @@ func main() {
 		pathSep = "" // do not replace the path separator if it already matches the current OS path separator
 	}
 
-	byteKeyVal = make([][]string, 0, 25)
+	byteAssocKeyVal = make([][]string, 0, 25)
 
-	strKeyVal = make([][]string, 0, 25)
+	strAssocKeyVal = make([][]string, 0, 25)
 
 	fileT, err := template.New("file").Delims("{^", "^}").Parse(fileTemplText)
 	if err != nil {
 		log.Fatalf("Error parsing file template: %s", err.Error())
+	}
+
+	byteVarT, err := template.New("bytevar").Delims("{^", "^}").Parse(byteVarTemplate)
+	if err != nil {
+		log.Fatalf("Error parsing \"var(...)\" template: %s", err.Error())
+	}
+
+	strConstT, err := template.New("strconst").Delims("{^", "^}").Parse(strConstTemplate)
+	if err != nil {
+		log.Fatalf("Error parsing \"const(...)\" template: %s", err.Error())
 	}
 
 	varByteFilesT, err := template.New("varbytefiles").Delims("{^", "^}").Parse(varByteFilesTemplate)
@@ -317,6 +396,26 @@ func main() {
 		checkErr(err)
 	}
 
+	// Generate byte variables if there are any
+	if genConst && (len(strConstKeyVal) > 0 || len(byteVarKeyVal) != 0) {
+		var tpl bytes.Buffer
+		err = byteVarT.Execute(&tpl, getAlignedKeyValStr(byteVarKeyVal, "", " = "))
+		if err != nil {
+			log.Fatalf("Error executing \"var(...)\" template: %s", err.Error())
+		}
+		fileVars.ByteVars = tpl.String()
+	}
+
+	// Generate string constants if there are any
+	if genConst && (len(strConstKeyVal) > 0 || len(byteVarKeyVal) != 0) {
+		var tpl bytes.Buffer
+		err = strConstT.Execute(&tpl, getAlignedKeyValStr(strConstKeyVal, "", " = "))
+		if err != nil {
+			log.Fatalf("Error executing \"const(...)\" template: %s", err.Error())
+		}
+		fileVars.StrConstants = tpl.String()
+	}
+
 	if getResBytesFn != "" {
 		var tpl bytes.Buffer
 		err = getByteFnT.Execute(&tpl, getResBytesFn)
@@ -335,10 +434,10 @@ func main() {
 		fileVars.MustResBytesFn = tpl.String()
 	}
 
-	// If either of the byte functions is present then init the bytes var
+	// If either of the byte functions is present then init the byte slice map
 	if getResBytesFn != "" || mustResBytesFn != "" {
 		var tpl bytes.Buffer
-		err = varByteFilesT.Execute(&tpl, getAlignedKeyValStr(byteKeyVal))
+		err = varByteFilesT.Execute(&tpl, getAlignedKeyValStr(byteAssocKeyVal, ": ", ""))
 		if err != nil {
 			log.Fatalf("Error executing \"var byteFiles...\" template: %s", err.Error())
 		}
@@ -363,10 +462,10 @@ func main() {
 		fileVars.MustResStrFn = tpl.String()
 	}
 
-	// If either of the byte functions is present then init the bytes var
+	// If either of the byte functions is present then init the string map
 	if getResStrFn != "" || mustResStrFn != "" {
 		var tpl bytes.Buffer
-		err = varStrFilesT.Execute(&tpl, getAlignedKeyValStr(strKeyVal))
+		err = varStrFilesT.Execute(&tpl, getAlignedKeyValStr(strAssocKeyVal, ": ", ""))
 		if err != nil {
 			log.Fatalf("Error executing \"var strFiles...\" template: %s", err.Error())
 		}
@@ -400,39 +499,45 @@ func main() {
 func walkFn(path string, info os.FileInfo, err error) error {
 
 	var (
-		isByte       bool = false
-		isStr        bool = false
-		relativePath string
+		isByte       bool   = false // whether to append to byte slice list
+		isStr        bool   = false // whether to append to string list
+		pathInScript string         //the path that will be used in the script
 	)
 
-	// Skip the root dir without printing any information
+	// Skip the root dir
 	if info.IsDir() && path == src {
 		return nil
 	}
 
-	if walkDirMode {
+	// Generate pathInScript from current path
+	if walkDirMode { // if we are traversing a directory then strip the starting path only
+
+		// Remove
 		if strings.HasPrefix(path, src) {
-			relativePath = pathPrefix + path[len(src):]
+			pathInScript = pathPrefix + path[len(src):]
 		} else {
-			relativePath = pathPrefix + path
+			pathInScript = pathPrefix + path
 		}
-	} else {
-		relativePath = pathPrefix + info.Name()
+
+	} else { // if we are adding a single file then strip whole path
+		pathInScript = pathPrefix + info.Name()
 	}
 
-	if pathSep != "" {
-		relativePath = strings.Replace(relativePath, string(filepath.Separator), pathSep, -1)
+	// If path separator is specified and it does not match the one
+	// of current OS then replace it in the pathInScript
+	if pathSep != "" && string(filepath.Separator) != pathSep {
+		pathInScript = strings.Replace(pathInScript, string(filepath.Separator), pathSep, -1)
 	}
 
 	if !silent {
-		fmt.Printf("Processing \"%s\": ", relativePath)
+		fmt.Printf("Processing \"%s\": ", pathInScript)
 	}
 
 	// If some error occurred print a warning and proceed
 	if err != nil {
 		if silent {
 			if dst != "" { // If not printing to console, then output a warning
-				fmt.Println(fmt.Sprintf("File or directory \"%s\" skipped due to an error: %s", relativePath, err.Error()))
+				fmt.Println(fmt.Sprintf("File or directory \"%s\" skipped due to an error: %s", pathInScript, err.Error()))
 			}
 		} else {
 			fmt.Println(fmt.Sprintf("skipped due to an error: %s", err.Error()))
@@ -448,6 +553,7 @@ func walkFn(path string, info os.FileInfo, err error) error {
 		return nil
 	}
 
+	// Match bytePatterns
 	if bytePatterns != nil {
 
 		for _, pattern := range bytePatterns {
@@ -465,7 +571,8 @@ func walkFn(path string, info os.FileInfo, err error) error {
 
 	}
 
-	// It can be both made available for byte and string format
+	// Match stringPatterns.
+	// Files can be both made available for byte and string format.
 	if strPatterns != nil {
 
 		for _, pattern := range strPatterns {
@@ -483,21 +590,17 @@ func walkFn(path string, info os.FileInfo, err error) error {
 
 	}
 
+	// If neither of the patterns is matched,
+	// check the default rule.
 	if !isByte && !isStr {
 		switch defFormat {
-
 		case "byte":
 			isByte = true
-			break
-
 		case "str":
 			isStr = true
-			break
-
 		case "both":
 			isByte = true
 			isStr = true
-
 		}
 	}
 
@@ -513,13 +616,16 @@ func walkFn(path string, info os.FileInfo, err error) error {
 		}
 	}
 
+	// Read the file
 	data, err := ioutil.ReadFile(path)
 
 	// If some error occurred print a warning and proceed
 	if err != nil {
 		if silent {
 			if dst != "" { // If not printing to console, then output a warning
-				fmt.Println(fmt.Sprintf("File \"%s\" skipped due to an error: %s", relativePath, err.Error()))
+				fmt.Println(fmt.Sprintf("WARNING: File \"%s\" skipped due to an error: %s", pathInScript, err.Error()))
+			} else { // If printing to console then panic
+				log.Fatalf("Error reading file \"%s\": %s", pathInScript, err.Error())
 			}
 		} else {
 			fmt.Println(fmt.Sprintf("skipped due to an error: %s", err.Error()))
@@ -527,24 +633,38 @@ func walkFn(path string, info os.FileInfo, err error) error {
 		return nil
 	}
 
+	// Add to byte constants and variables
 	if isByte {
 
-		var buffer bytes.Buffer
+		var b bytes.Buffer
 
 		for i, v := range data {
 			if i > 0 {
-				buffer.WriteString(fmt.Sprintf(", %d", v))
+				b.WriteString(fmt.Sprintf(", %d", v))
 			} else {
-				buffer.WriteString(fmt.Sprintf("%d", v))
+				b.WriteString(fmt.Sprintf("%d", v))
 			}
 		}
 
-		byteKeyVal = append(byteKeyVal, []string{strconv.Quote(relativePath), "[]byte{" + buffer.String() + "}"})
+		if genConst {
+			constName := pathToVar(pathInScript, byteConstPrefix)
+			byteVarKeyVal = append(byteVarKeyVal, []string{constName, "[]byte{" + b.String() + "}"})
+			byteAssocKeyVal = append(byteAssocKeyVal, []string{strconv.Quote(pathInScript), constName})
+		} else {
+			byteAssocKeyVal = append(byteAssocKeyVal, []string{strconv.Quote(pathInScript), "[]byte{" + b.String() + "}"})
+		}
 
 	}
 
+	// Add to string constants and variables
 	if isStr {
-		strKeyVal = append(strKeyVal, []string{strconv.Quote(relativePath), strconv.Quote(string(data))})
+		if genConst {
+			constName := pathToVar(pathInScript, strConstPrefix)
+			strConstKeyVal = append(strConstKeyVal, []string{constName, strconv.Quote(string(data))})
+			strAssocKeyVal = append(strAssocKeyVal, []string{strconv.Quote(pathInScript), constName})
+		} else {
+			strAssocKeyVal = append(strAssocKeyVal, []string{strconv.Quote(pathInScript), strconv.Quote(string(data))})
+		}
 	}
 
 	return nil
@@ -566,10 +686,43 @@ func getUnquoted(s string) string {
 	return s
 }
 
+func pathToVar(path string, constPrefix string) string {
+
+	// Generate the name of the variable (or constant)
+	c := constPrefix + invConstCharRe.ReplaceAllLiteralString(path, "_")
+
+	// If the name already is used by some path
+	otherPath, ok := constFiles[c]
+	if ok {
+
+		// Panic if fixing of duplicate names is not enabled
+		if !duplfix {
+			log.Fatalf("Files \"%s\" and \"%s\" convert into variables with identical name \"%s\".\nPlease either rename one of the files (recommended), or pass -duplfix flag to have an integer appended to the variable names of one of the filenames by random (not recommended).", otherPath, path, c)
+		}
+
+		suffix := 1
+		for ; suffix < maxConstSuffix; suffix++ {
+			otherPath, ok = constFiles[c+string(suffix)]
+			if !ok {
+				break
+			}
+		}
+
+		if ok {
+			log.Fatalf("Could not generate a unique variable name for file \"%s\".", path)
+		}
+
+		c = c + string(suffix)
+
+	}
+
+	return c
+}
+
 // getAlignedKeyValStr returns a slice of key value pairs
 // concatenated with each pair on a separate row
 // and values aligned to start at the same column.
-func getAlignedKeyValStr(keyVals [][]string) string {
+func getAlignedKeyValStr(keyVals [][]string, keySuffix string, valPrefix string) string {
 
 	count := len(keyVals)
 
@@ -577,9 +730,9 @@ func getAlignedKeyValStr(keyVals [][]string) string {
 		return ""
 	}
 
-	var buffer bytes.Buffer
+	var b bytes.Buffer
 
-	buffer.WriteString(newline)
+	b.WriteString(newline)
 
 	longest := 0
 
@@ -591,26 +744,26 @@ func getAlignedKeyValStr(keyVals [][]string) string {
 
 	for i, keyVal := range keyVals {
 
-		buffer.WriteString("\t" + keyVal[0] + ": ")
+		b.WriteString("\t" + keyVal[0] + keySuffix)
 
 		// If the key is shorter than the longest key
 		// then add one or more space between ":" and the value
 		// to align all values to start at the same col
 		spaces := longest - len(keyVal[0])
 		if spaces >= 0 {
-			buffer.WriteString(strings.Repeat(" ", spaces))
+			b.WriteString(strings.Repeat(" ", spaces))
 		}
 
 		// No comma and newline after the last
 		if i == count-1 {
-			buffer.WriteString(keyVal[1])
+			b.WriteString(valPrefix + keyVal[1])
 		} else {
-			buffer.WriteString(keyVal[1] + "," + newline)
+			b.WriteString(valPrefix + keyVal[1] + "," + newline)
 		}
 
 	}
 
-	return buffer.String()
+	return b.String()
 
 }
 
