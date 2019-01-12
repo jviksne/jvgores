@@ -58,7 +58,7 @@ type FileVars struct {
 }
 
 var (
-	genConst        bool
+	genVars         bool
 	genFns          bool
 	fileVars        FileVars
 	getResBytesFn   string
@@ -72,18 +72,18 @@ var (
 	bytePatterns    []string
 	strPatterns     []string
 	defFormat       string
-	byteConstPrefix string
+	byteVarPrefix   string
 	strConstPrefix  string
-	byteVarKeyVal   [][]string                              // list of constants
-	strConstKeyVal  [][]string                              // list of string
+	byteVarKeyVal   [][]string                              // list of byte slice variables
+	strConstKeyVal  [][]string                              // list of string constants
 	byteAssocKeyVal [][]string                              // list of values to be used by byte functions
 	strAssocKeyVal  [][]string                              // list of values to be used by string functions
-	constFiles      map[string]string = map[string]string{} // all constant names mapped to filenames, used to identify duplicates
-	duplfix         bool              = false               // whether to automatically fix duplicate constant names by appending integer suffix
-	maxConstSuffix  int               = 100000              // If multiple files have the same name then the largest integer that can be appended to the name to make it unique
+	varToFile       map[string]string = map[string]string{} // all variable or constant names mapped to filenames, used to identify duplicates
+	duplfix         bool              = false               // whether to automatically fix duplicate variable names by appending integer suffix
+	maxVarSuffix    int               = 100000              // If multiple files have the same name then the largest integer that can be appended to the name to make it unique
 	pathSep         string
 	silent          bool           = false
-	invConstCharRe  *regexp.Regexp = regexp.MustCompile("[^a-zA-Z0-9_]") // regular expression matching an invalid constant character
+	invVarCharRe    *regexp.Regexp = regexp.MustCompile("[^a-zA-Z0-9_]") // regular expression matching an invalid constant character
 )
 
 const (
@@ -189,7 +189,7 @@ func main() {
 
 	flag.StringVar(&pathPrefix, "prefix", "", "some path prefix to add to the path that is added to public variables as well as passed to GetResStr() and GetResBytes() functions for identifying the files")
 
-	flag.StringVar(&byteConstPrefix, "bcprefix", "", "some prefix to add to the byte slice variables, defaults to \"B_\" if omitted or empty")
+	flag.StringVar(&byteVarPrefix, "bcprefix", "", "some prefix to add to the byte slice variables, defaults to \"B_\" if omitted or empty")
 
 	flag.StringVar(&strConstPrefix, "scprefix", "", "some prefix to add to the string constants, defaults to \"S_\" if omitted or empty")
 
@@ -222,7 +222,7 @@ func main() {
 	getResStrFn = getUnquoted(getResStrFn)
 	mustResStrFn = getUnquoted(mustResStrFn)
 	pathPrefix = getUnquoted(pathPrefix)
-	byteConstPrefix = getUnquoted(byteConstPrefix)
+	byteVarPrefix = getUnquoted(byteVarPrefix)
 	strConstPrefix = getUnquoted(strConstPrefix)
 	bytePatternList = getUnquoted(bytePatternList)
 	strPatternList = getUnquoted(strPatternList)
@@ -257,15 +257,15 @@ func main() {
 	}
 
 	switch generate {
-	case "const":
-		genConst = true
+	case "vars":
+		genVars = true
 	case "func":
 		genFns = true
 	case "both":
-		genConst = true
+		genVars = true
 		genFns = true
 	default:
-		log.Fatalf("Bad value specified for argument gen: \"%s\".\nAllowed values are \"const\", \"func\", \"both\".", defFormat)
+		log.Fatalf("Bad value specified for argument gen: \"%s\".\nAllowed values are \"vars\", \"func\", \"both\".", defFormat)
 	}
 
 	if getResBytesFn == "" {
@@ -292,22 +292,23 @@ func main() {
 		mustResStrFn = ""
 	}
 
-	// Do not allow blank byte constants
-	if byteConstPrefix == "" {
-		byteConstPrefix = "B_"
+	// Do not allow blank variabe prefixes
+	if byteVarPrefix == "" {
+		byteVarPrefix = "B_"
 	}
 
 	// Verify that prefix is valid
-	if invConstCharRe.MatchString(byteConstPrefix) {
+	if invVarCharRe.MatchString(byteVarPrefix) {
 		log.Fatal("The bcprefix contains one or more invalid characters, only Latin letters and numbers are allowed!")
 	}
 
+	// Do not allow blank constant prefixes
 	if strConstPrefix == "" {
 		strConstPrefix = "S_"
 	}
 
 	// Verify that prefix is valid
-	if invConstCharRe.MatchString(strConstPrefix) {
+	if invVarCharRe.MatchString(strConstPrefix) {
 		log.Fatal("The scprefix contains one or more invalid characters, only Latin letters and numbers are allowed!")
 	}
 
@@ -397,9 +398,9 @@ func main() {
 	}
 
 	// Generate byte variables if there are any
-	if genConst && (len(strConstKeyVal) > 0 || len(byteVarKeyVal) != 0) {
+	if genVars && len(byteVarKeyVal) != 0 {
 		var tpl bytes.Buffer
-		err = byteVarT.Execute(&tpl, getAlignedKeyValStr(byteVarKeyVal, "", " = "))
+		err = byteVarT.Execute(&tpl, getAlignedKeyValStr(byteVarKeyVal, "", " = ", ""))
 		if err != nil {
 			log.Fatalf("Error executing \"var(...)\" template: %s", err.Error())
 		}
@@ -407,9 +408,9 @@ func main() {
 	}
 
 	// Generate string constants if there are any
-	if genConst && (len(strConstKeyVal) > 0 || len(byteVarKeyVal) != 0) {
+	if genVars && len(strConstKeyVal) > 0 {
 		var tpl bytes.Buffer
-		err = strConstT.Execute(&tpl, getAlignedKeyValStr(strConstKeyVal, "", " = "))
+		err = strConstT.Execute(&tpl, getAlignedKeyValStr(strConstKeyVal, "", " = ", ""))
 		if err != nil {
 			log.Fatalf("Error executing \"const(...)\" template: %s", err.Error())
 		}
@@ -437,7 +438,7 @@ func main() {
 	// If either of the byte functions is present then init the byte slice map
 	if getResBytesFn != "" || mustResBytesFn != "" {
 		var tpl bytes.Buffer
-		err = varByteFilesT.Execute(&tpl, getAlignedKeyValStr(byteAssocKeyVal, ": ", ""))
+		err = varByteFilesT.Execute(&tpl, getAlignedKeyValStr(byteAssocKeyVal, ": ", "", ","))
 		if err != nil {
 			log.Fatalf("Error executing \"var byteFiles...\" template: %s", err.Error())
 		}
@@ -465,7 +466,7 @@ func main() {
 	// If either of the byte functions is present then init the string map
 	if getResStrFn != "" || mustResStrFn != "" {
 		var tpl bytes.Buffer
-		err = varStrFilesT.Execute(&tpl, getAlignedKeyValStr(strAssocKeyVal, ": ", ""))
+		err = varStrFilesT.Execute(&tpl, getAlignedKeyValStr(strAssocKeyVal, ": ", "", ","))
 		if err != nil {
 			log.Fatalf("Error executing \"var strFiles...\" template: %s", err.Error())
 		}
@@ -646,8 +647,8 @@ func walkFn(path string, info os.FileInfo, err error) error {
 			}
 		}
 
-		if genConst {
-			constName := pathToVar(pathInScript, byteConstPrefix)
+		if genVars {
+			constName := pathToVar(pathInScript, byteVarPrefix)
 			byteVarKeyVal = append(byteVarKeyVal, []string{constName, "[]byte{" + b.String() + "}"})
 			byteAssocKeyVal = append(byteAssocKeyVal, []string{strconv.Quote(pathInScript), constName})
 		} else {
@@ -658,7 +659,7 @@ func walkFn(path string, info os.FileInfo, err error) error {
 
 	// Add to string constants and variables
 	if isStr {
-		if genConst {
+		if genVars {
 			constName := pathToVar(pathInScript, strConstPrefix)
 			strConstKeyVal = append(strConstKeyVal, []string{constName, strconv.Quote(string(data))})
 			strAssocKeyVal = append(strAssocKeyVal, []string{strconv.Quote(pathInScript), constName})
@@ -689,10 +690,10 @@ func getUnquoted(s string) string {
 func pathToVar(path string, constPrefix string) string {
 
 	// Generate the name of the variable (or constant)
-	c := constPrefix + invConstCharRe.ReplaceAllLiteralString(path, "_")
+	c := constPrefix + invVarCharRe.ReplaceAllLiteralString(path, "_")
 
 	// If the name already is used by some path
-	otherPath, ok := constFiles[c]
+	otherPath, ok := varToFile[c]
 	if ok {
 
 		// Panic if fixing of duplicate names is not enabled
@@ -701,8 +702,8 @@ func pathToVar(path string, constPrefix string) string {
 		}
 
 		suffix := 1
-		for ; suffix < maxConstSuffix; suffix++ {
-			otherPath, ok = constFiles[c+string(suffix)]
+		for ; suffix < maxVarSuffix; suffix++ {
+			otherPath, ok = varToFile[c+string(suffix)]
 			if !ok {
 				break
 			}
@@ -722,7 +723,7 @@ func pathToVar(path string, constPrefix string) string {
 // getAlignedKeyValStr returns a slice of key value pairs
 // concatenated with each pair on a separate row
 // and values aligned to start at the same column.
-func getAlignedKeyValStr(keyVals [][]string, keySuffix string, valPrefix string) string {
+func getAlignedKeyValStr(keyVals [][]string, keySuffix string, valPrefix string, comma string) string {
 
 	count := len(keyVals)
 
@@ -758,7 +759,7 @@ func getAlignedKeyValStr(keyVals [][]string, keySuffix string, valPrefix string)
 		if i == count-1 {
 			b.WriteString(valPrefix + keyVal[1])
 		} else {
-			b.WriteString(valPrefix + keyVal[1] + "," + newline)
+			b.WriteString(valPrefix + keyVal[1] + comma + newline)
 		}
 
 	}

@@ -12,7 +12,7 @@ var(
 
 // File contents as public string constants.
 const(
-	S_some_text_file_txt                  = "Some text content.",
+	S_some_text_file_txt                  = "Some text content."
 	S_subdir_some_text_file_in_subdir_txt = "First line.\r\nSecond line.\r\nVarious 'quotes' \"on\" `this` line.\r\n"
 )
 
