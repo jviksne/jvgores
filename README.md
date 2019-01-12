@@ -17,7 +17,7 @@ From command line:
 
 Go:generate:
 
-`//go:generate jvgores -src="test/data" -dst="test/output.go" -str="*.txt,*.htm?,*.js,*.css" -def=byte -sep=/ -pkg=res`
+`//go:generate jvgores -src="sample/data" -dst="sample/output.go" -str="*.txt,*.htm?,*.js,*.css" -def=byte -sep=/ -pkg=res`
 
 The flags are:
 ```
