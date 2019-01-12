@@ -61,7 +61,7 @@ The flags are:
     do not print status information upon successful generation of the file
 
 -help
-	prints help
+    prints information about flags
 ```
 
 ## Sample output file
