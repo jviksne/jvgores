@@ -45,6 +45,7 @@ import (
 )
 
 type FileVars struct {
+	Import         string
 	Cmd            string // Command used to generate the file
 	PackageName    string
 	ByteVars       string
@@ -55,12 +56,20 @@ type FileVars struct {
 	MustResBytesFn string
 	GetResStrFn    string
 	MustResStrFn   string
+	FindResFn      string
+}
+
+type FindResVars struct {
+	FnName   string
+	StrLoop  string
+	ByteLoop string
 }
 
 var (
 	genVars         bool
 	genFns          bool
 	fileVars        FileVars
+	findResVars     FindResVars
 	getResBytesFn   string
 	mustResBytesFn  string
 	getResStrFn     string
@@ -91,20 +100,20 @@ const (
 	
 package {^.PackageName^}
 
-import "fmt"{^.ByteVars^}{^.StrConstants^}{^.VarByteFiles^}{^.VarStrFiles^}{^.GetResBytesFn^}{^.MustResBytesFn^}{^.GetResStrFn^}{^.MustResStrFn^}
+{^.Import^}{^.ByteVars^}{^.StrConstants^}{^.VarByteFiles^}{^.VarStrFiles^}{^.GetResBytesFn^}{^.MustResBytesFn^}{^.GetResStrFn^}{^.MustResStrFn^}{^.FindResFn^}
 `
 
 	byteVarTemplate = `
 
 // File contents as public byte slice variables.
 // Byte slices are variables because arrays can not be constants.
-var({^.^}
+var ({^.^}
 )`
 
 	strConstTemplate = `
 
 // File contents as public string constants.
-const({^.^}
+const ({^.^}
 )`
 
 	varByteFilesTemplate = `
@@ -155,8 +164,58 @@ func {^.^}(name string) string {
 		panic(fmt.Sprintf("String resource \"%s\" not found.", name))
 	}
 	return s
-}
-`
+}`
+
+	findResFnTemplText = `
+
+// {^.FnName^} returns a slice of resource
+// paths that match a pattern.
+// The pattern is matched as a shell
+// file pattern. E.g. pattern "/path/to/*.ext"
+// matches "/path/to/somefile.ext"
+// but will not match "somefile.ext"
+// or "/to/somefile.ext".
+func {^.FnName^}(pattern string, inclByte bool, inclStr bool) (*[]string, error) {
+	var k string
+
+	res := make([]string, 0, 5)
+	{^.StrLoop^}{^.ByteLoop^}
+
+	return &res, nil
+}`
+
+	byteLoopText = `
+	if inclByte {
+		for k, _ = range byteFiles {
+
+			match, err := filepath.Match(pattern, k)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if match {
+				res = append(res, k)
+			}
+		}	
+	}`
+
+	strLoopText = `
+	if inclStr {
+		for k, _ = range strFiles {
+
+			match, err := filepath.Match(pattern, k)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if match {
+				res = append(res, k)
+			}
+		}	
+	}`
+
 	newline = "\r\n"
 )
 
@@ -186,6 +245,8 @@ func main() {
 	flag.StringVar(&getResStrFn, "getresstrfn", "GetResStr", "name of the function for retrieving the string contents of a file, defaults to GetResStr, pass \"nil\" to ommit the function")
 
 	flag.StringVar(&mustResStrFn, "mustresstrfn", "MustResStr", "name of the helper function for retrieving the string contents of a file that panics upon the path not found, defaults to MustResStr, pass \"nil\" to ommit the function")
+
+	flag.StringVar(&findResVars.FnName, "findresfn", "FindRes", "name of the helper function for finding all files that match a path pattern, defaults to FindRes, pass \"nil\" to ommit the function")
 
 	flag.StringVar(&pathPrefix, "prefix", "", "some path prefix to add to the path that is added to public variables as well as passed to GetResStr() and GetResBytes() functions for identifying the files")
 
@@ -221,6 +282,7 @@ func main() {
 	mustResBytesFn = getUnquoted(mustResBytesFn)
 	getResStrFn = getUnquoted(getResStrFn)
 	mustResStrFn = getUnquoted(mustResStrFn)
+	findResVars.FnName = getUnquoted(findResVars.FnName)
 	pathPrefix = getUnquoted(pathPrefix)
 	byteVarPrefix = getUnquoted(byteVarPrefix)
 	strConstPrefix = getUnquoted(strConstPrefix)
@@ -290,6 +352,12 @@ func main() {
 		mustResStrFn = "MustResStr"
 	} else if mustResStrFn == "nil" {
 		mustResStrFn = ""
+	}
+
+	if findResVars.FnName == "" {
+		findResVars.FnName = "FindRes"
+	} else if findResVars.FnName == "nil" {
+		findResVars.FnName = ""
 	}
 
 	// Do not allow blank variabe prefixes
@@ -371,6 +439,11 @@ func main() {
 	mustStrFnT, err := template.New("mustresstr").Delims("{^", "^}").Parse(mustResStrFnTemplText)
 	if err != nil {
 		log.Fatalf("Error parsing MustResStr() template: %s", err.Error())
+	}
+
+	findResFnT, err := template.New("findres").Delims("{^", "^}").Parse(findResFnTemplText)
+	if err != nil {
+		log.Fatalf("Error parsing FindRes() template: %s", err.Error())
 	}
 
 	info, err := os.Stat(src)
@@ -471,6 +544,25 @@ func main() {
 			log.Fatalf("Error executing \"var strFiles...\" template: %s", err.Error())
 		}
 		fileVars.VarStrFiles = tpl.String()
+	}
+
+	// If FindRes() function is to be constructed and either of the variable
+	// maps exists then add the FindRes() function.
+	if findResVars.FnName != "" && (fileVars.VarStrFiles != "" || fileVars.VarByteFiles != "") {
+		var tpl bytes.Buffer
+		findResVars.StrLoop = strLoopText
+		findResVars.ByteLoop = byteLoopText
+		err = findResFnT.Execute(&tpl, findResVars)
+		if err != nil {
+			log.Fatalf("Error executing FindRes() function template: %s", err.Error())
+		}
+		fileVars.FindResFn = tpl.String()
+		fileVars.Import = `import (
+	"fmt"
+	"path/filepath"
+)`
+	} else {
+		fileVars.Import = `import "fmt"`
 	}
 
 	// If no destination file is specified, print it to console

@@ -45,6 +45,9 @@ The flags are:
 -mustresbytesfn="MustResBytes"
     name of the helper function for retrieving the contents of a file as a byte slice that panics upon the path not found, defaults to MustResBytes, pass "nil" to ommit the function
 
+-findresfn="FindRes"
+	name of the helper function for finding all files that match a path pattern, defaults to FindRes, pass "nil" to ommit the function
+
 -prefix="/some/prefix/"
     some path prefix to add to the path that is added to public variables as well as passed to GetResStr() and GetResBytes() functions for identifying the files
 

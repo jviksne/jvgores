@@ -2,16 +2,19 @@
 	
 package res
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // File contents as public byte slice variables.
 // Byte slices are variables because arrays can not be constants.
-var(
+var (
 	B_zero_png = []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 6, 98, 75, 71, 68, 0, 255, 0, 255, 0, 255, 160, 189, 167, 147, 0, 0, 0, 9, 112, 72, 89, 115, 0, 0, 46, 35, 0, 0, 46, 35, 1, 120, 165, 63, 118, 0, 0, 0, 11, 73, 68, 65, 84, 8, 215, 99, 96, 0, 2, 0, 0, 5, 0, 1, 226, 38, 5, 155, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}
 )
 
 // File contents as public string constants.
-const(
+const (
 	S_some_text_file_txt                  = "Some text content."
 	S_subdir_some_text_file_in_subdir_txt = "First line.\r\nSecond line.\r\nVarious 'quotes' \"on\" `this` line.\r\n"
 )
@@ -57,3 +60,46 @@ func MustResStr(name string) string {
 	return s
 }
 
+// FindRes returns a slice of resource
+// paths that match a pattern.
+// The pattern is matched as a shell
+// file pattern. E.g. pattern "/path/to/*.ext"
+// matches "/path/to/somefile.ext"
+// but will not match "somefile.ext"
+// or "/to/somefile.ext".
+func FindRes(pattern string, inclByte bool, inclStr bool) (*[]string, error) {
+	var k string
+
+	res := make([]string, 0, 5)
+	
+	if inclStr {
+		for k, _ = range strFiles {
+
+			match, err := filepath.Match(pattern, k)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if match {
+				res = append(res, k)
+			}
+		}	
+	}
+	if inclByte {
+		for k, _ = range byteFiles {
+
+			match, err := filepath.Match(pattern, k)
+
+			if err != nil {
+				return nil, err
+			}
+
+			if match {
+				res = append(res, k)
+			}
+		}	
+	}
+
+	return &res, nil
+}
