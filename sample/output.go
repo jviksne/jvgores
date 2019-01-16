@@ -60,13 +60,10 @@ func MustResStr(name string) string {
 	return s
 }
 
-// FindRes returns a slice of resource
-// paths that match a pattern.
-// The pattern is matched as a shell
-// file pattern. E.g. pattern "/path/to/*.ext"
-// matches "/path/to/somefile.ext"
-// but will not match "somefile.ext"
-// or "/to/somefile.ext".
+// FindRes returns a slice of resource paths that
+// match a shell file pattern.
+// For example, "/path/to/*.ext" matches "/path/to/somefile.ext"
+// but will not match "somefile.ext" or "/to/somefile.ext".
 func FindRes(pattern string, inclByte bool, inclStr bool) (*[]string, error) {
 	var k string
 
